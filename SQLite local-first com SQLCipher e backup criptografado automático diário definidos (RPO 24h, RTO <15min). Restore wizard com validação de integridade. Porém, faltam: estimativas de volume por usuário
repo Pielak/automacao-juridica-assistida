@@ -1,0 +1,461 @@
+Vou gerar o módulo completo de SQLite local-first com SQLCipher e backup criptografado automático diário, incluindo estimativas de volume por usuário.
+
+```rust
+// src/services/database/mod.rs
+pub mod backup;
+pub mod cipher;
+pub mod connection;
+pub mod encryption;
+pub mod integrity;
+pub mod migration;
+pub mod restore;
+pub mod volume_estimator;
+
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{info, error, warn, debug};
+
+/// Configuração principal do módulo de banco de dados
+#[derive(Debug, Clone)]
+pub struct DatabaseConfig {
+    pub db_path: String,
+    pub password: String,
+    pub kdf_iterations: u32,
+    pub wal_mode: bool,
+    pub page_size: i32,
+    pub cache_size: i32,
+    pub journal_mode: String,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            db_path: String::from("data/local.db"),
+            password: String::new(),
+            kdf_iterations: 100_000,
+            wal_mode: true,
+            page_size: 4096,
+            cache_size: -64000, // 64MB
+            journal_mode: String::from("WAL"),
+        }
+    }
+}
+
+/// Gerenciador principal do banco de dados
+pub struct DatabaseManager {
+    config: DatabaseConfig,
+    connection: Arc<RwLock<Option<rusqlite::Connection>>>,
+    backup_manager: backup::BackupManager,
+    restore_wizard: restore::RestoreWizard,
+    volume_estimator: volume_estimator::VolumeEstimator,
+}
+
+impl DatabaseManager {
+    pub fn new(config: DatabaseConfig) -> Self {
+        Self {
+            config: config.clone(),
+            connection: Arc::new(RwLock::new(None)),
+            backup_manager: backup::BackupManager::new(config.clone()),
+            restore_wizard: restore::RestoreWizard::new(config.clone()),
+            volume_estimator: volume_estimator::VolumeEstimator::new(),
+        }
+    }
+
+    /// Inicializa a conexão com o banco de dados criptografado
+    pub async fn initialize(&self) -> Result<(), DatabaseError> {
+        info!("Inicializando banco de dados criptografado");
+        
+        // Verificar integridade do banco existente
+        if std::path::Path::new(&self.config.db_path).exists() {
+            self.verify_integrity().await?;
+        }
+
+        let connection = self.create_connection()?;
+        
+        // Configurar SQLCipher
+        self.configure_sqlcipher(&connection)?;
+        
+        // Executar migrações
+        migration::run_migrations(&connection)?;
+        
+        // Atualizar estimativas de volume
+        self.volume_estimator.update_estimates(&connection)?;
+        
+        let mut conn_lock = self.connection.write().await;
+        *conn_lock = Some(connection);
+        
+        info!("Banco de dados inicializado com sucesso");
+        Ok(())
+    }
+
+    fn create_connection(&self) -> Result<rusqlite::Connection, DatabaseError> {
+        let connection = rusqlite::Connection::open(&self.config.db_path)
+            .map_err(|e| DatabaseError::ConnectionError(e.to_string()))?;
+        
+        Ok(connection)
+    }
+
+    fn configure_sqlcipher(&self, connection: &rusqlite::Connection) -> Result<(), DatabaseError> {
+        // Configurar chave de criptografia
+        let pragma_key = format!("PRAGMA key = '{}'", self.config.password);
+        connection.execute_batch(&pragma_key)
+            .map_err(|e| DatabaseError::EncryptionError(e.to_string()))?;
+        
+        // Configurar KDF iterations
+        let pragma_kdf = format!("PRAGMA kdf_iter = '{}'", self.config.kdf_iterations);
+        connection.execute_batch(&pragma_kdf)
+            .map_err(|e| DatabaseError::EncryptionError(e.to_string()))?;
+        
+        // Configurar cipher
+        connection.execute_batch("PRAGMA cipher = 'aes-256-cbc'")
+            .map_err(|e| DatabaseError::EncryptionError(e.to_string()))?;
+        
+        // Configurar modo WAL
+        if self.config.wal_mode {
+            connection.execute_batch("PRAGMA journal_mode=WAL")
+                .map_err(|e| DatabaseError::ConfigurationError(e.to_string()))?;
+        }
+        
+        // Configurar page size
+        let pragma_page = format!("PRAGMA page_size = {}", self.config.page_size);
+        connection.execute_batch(&pragma_page)
+            .map_err(|e| DatabaseError::ConfigurationError(e.to_string()))?;
+        
+        // Configurar cache size
+        let pragma_cache = format!("PRAGMA cache_size = {}", self.config.cache_size);
+        connection.execute_batch(&pragma_cache)
+            .map_err(|e| DatabaseError::ConfigurationError(e.to_string()))?;
+        
+        Ok(())
+    }
+
+    /// Verifica integridade do banco de dados
+    pub async fn verify_integrity(&self) -> Result<IntegrityReport, DatabaseError> {
+        let connection = self.connection.read().await;
+        let conn = connection.as_ref()
+            .ok_or(DatabaseError::NotInitialized)?;
+        
+        integrity::verify_integrity(conn)
+    }
+
+    /// Executa backup automático
+    pub async fn execute_auto_backup(&self) -> Result<backup::BackupResult, DatabaseError> {
+        info!("Iniciando backup automático diário");
+        
+        let connection = self.connection.read().await;
+        let conn = connection.as_ref()
+            .ok_or(DatabaseError::NotInitialized)?;
+        
+        let result = self.backup_manager.execute_backup(conn).await?;
+        
+        info!("Backup automático concluído: {:?}", result);
+        Ok(result)
+    }
+
+    /// Inicia o wizard de restore
+    pub async fn start_restore_wizard(&self) -> Result<restore::RestoreSession, DatabaseError> {
+        info!("Iniciando wizard de restore");
+        
+        let restore_session = self.restore_wizard.start_session().await?;
+        
+        info!("Wizard de restore iniciado: {:?}", restore_session.id);
+        Ok(restore_session)
+    }
+
+    /// Obtém estimativas de volume por usuário
+    pub async fn get_volume_estimates(&self) -> Result<volume_estimator::VolumeEstimates, DatabaseError> {
+        let connection = self.connection.read().await;
+        let conn = connection.as_ref()
+            .ok_or(DatabaseError::NotInitialized)?;
+        
+        self.volume_estimator.get_estimates(conn)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum DatabaseError {
+    #[error("Erro de conexão: {0}")]
+    ConnectionError(String),
+    
+    #[error("Erro de criptografia: {0}")]
+    EncryptionError(String),
+    
+    #[error("Erro de configuração: {0}")]
+    ConfigurationError(String),
+    
+    #[error("Banco de dados não inicializado")]
+    NotInitialized,
+    
+    #[error("Erro de integridade: {0}")]
+    IntegrityError(String),
+    
+    #[error("Erro de backup: {0}")]
+    BackupError(String),
+    
+    #[error("Erro de restore: {0}")]
+    RestoreError(String),
+    
+    #[error("Erro de volume: {0}")]
+    VolumeError(String),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IntegrityReport {
+    pub is_valid: bool,
+    pub checksum: String,
+    pub page_count: u64,
+    pub free_pages: u64,
+    pub wal_size: u64,
+    pub errors: Vec<String>,
+}
+```
+
+```rust
+// src/services/database/backup.rs
+use std::path::PathBuf;
+use chrono::{DateTime, Utc, Duration};
+use sha2::{Sha256, Digest};
+use aes_gcm::{Aes256Gcm, Key, Nonce};
+use aes_gcm::aead::{Aead, KeyInit, OsRng};
+use rand::RngCore;
+use tokio::fs;
+use tracing::{info, error, warn, debug};
+
+use super::{DatabaseConfig, DatabaseError};
+
+/// Gerenciador de backups criptografados
+pub struct BackupManager {
+    config: DatabaseConfig,
+    backup_dir: PathBuf,
+    encryption_key: Vec<u8>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BackupResult {
+    pub id: String,
+    pub timestamp: DateTime<Utc>,
+    pub size: u64,
+    pub checksum: String,
+    pub encrypted: bool,
+    pub integrity_valid: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BackupMetadata {
+    pub id: String,
+    pub timestamp: DateTime<Utc>,
+    pub version: String,
+    pub schema_version: u32,
+    pub user_count: u32,
+    pub total_size: u64,
+    pub encryption_algorithm: String,
+    pub kdf_iterations: u32,
+}
+
+impl BackupManager {
+    pub fn new(config: DatabaseConfig) -> Self {
+        let backup_dir = PathBuf::from("backups");
+        let encryption_key = Self::derive_backup_key(&config.password);
+        
+        Self {
+            config,
+            backup_dir,
+            encryption_key,
+        }
+    }
+
+    fn derive_backup_key(password: &str) -> Vec<u8> {
+        use pbkdf2::pbkdf2_hmac;
+        use sha2::Sha256;
+        
+        let salt = b"backup_salt_2024";
+        let mut key = vec![0u8; 32];
+        pbkdf2_hmac::<Sha256>(password.as_bytes(), salt, 100_000, &mut key);
+        key
+    }
+
+    /// Executa backup completo do banco de dados
+    pub async fn execute_backup(&self, connection: &rusqlite::Connection) -> Result<BackupResult, DatabaseError> {
+        // Criar diretório de backup se não existir
+        fs::create_dir_all(&self.backup_dir).await
+            .map_err(|e| DatabaseError::BackupError(format!("Falha ao criar diretório: {}", e)))?;
+        
+        // Gerar ID único para o backup
+        let backup_id = uuid::Uuid::new_v4().to_string();
+        let timestamp = Utc::now();
+        
+        // Caminhos dos arquivos
+        let temp_path = self.backup_dir.join(format!("{}.tmp", backup_id));
+        let backup_path = self.backup_dir.join(format!("{}.enc", backup_id));
+        let metadata_path = self.backup_dir.join(format!("{}.meta", backup_id));
+        
+        // Realizar backup via VACUUM INTO
+        self.vacuum_backup(connection, &temp_path).await?;
+        
+        // Calcular checksum
+        let checksum = self.calculate_checksum(&temp_path).await?;
+        
+        // Criptografar backup
+        self.encrypt_backup(&temp_path, &backup_path).await?;
+        
+        // Remover arquivo temporário
+        fs::remove_file(&temp_path).await
+            .map_err(|e| DatabaseError::BackupError(format!("Falha ao remover temp: {}", e)))?;
+        
+        // Criar metadados
+        let metadata = BackupMetadata {
+            id: backup_id.clone(),
+            timestamp,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            schema_version: 1,
+            user_count: self.get_user_count(connection)?,
+            total_size: self.get_file_size(&backup_path).await?,
+            encryption_algorithm: "AES-256-GCM".to_string(),
+            kdf_iterations: 100_000,
+        };
+        
+        // Salvar metadados
+        let metadata_json = serde_json::to_string(&metadata)
+            .map_err(|e| DatabaseError::BackupError(format!("Falha ao serializar metadados: {}", e)))?;
+        
+        fs::write(&metadata_path, metadata_json).await
+            .map_err(|e| DatabaseError::BackupError(format!("Falha ao salvar metadados: {}", e)))?;
+        
+        // Verificar integridade do backup
+        let integrity_valid = self.verify_backup_integrity(&backup_path, &checksum).await?;
+        
+        // Limpar backups antigos (RPO 24h)
+        self.cleanup_old_backups().await?;
+        
+        Ok(BackupResult {
+            id: backup_id,
+            timestamp,
+            size: metadata.total_size,
+            checksum,
+            encrypted: true,
+            integrity_valid,
+        })
+    }
+
+    async fn vacuum_backup(&self, connection: &rusqlite::Connection, path: &PathBuf) -> Result<(), DatabaseError> {
+        let path_str = path.to_str()
+            .ok_or(DatabaseError::BackupError("Caminho inválido".to_string()))?;
+        
+        connection.execute_batch(&format!("VACUUM INTO '{}'", path_str))
+            .map_err(|e| DatabaseError::BackupError(format!("Falha no VACUUM: {}", e)))?;
+        
+        Ok(())
+    }
+
+    async fn calculate_checksum(&self, path: &PathBuf) -> Result<String, DatabaseError> {
+        let data = fs::read(path).await
+            .map_err(|e| DatabaseError::BackupError(format!("Falha ao ler arquivo: {}", e)))?;
+        
+        let mut hasher = Sha256::new();
+        hasher.update(&data);
+        let result = hasher.finalize();
+        
+        Ok(format!("{:x}", result))
+    }
+
+    async fn encrypt_backup(&self, input_path: &PathBuf, output_path: &PathBuf) -> Result<(), DatabaseError> {
+        let data = fs::read(input_path).await
+            .map_err(|e| DatabaseError::BackupError(format!("Falha ao ler input: {}", e)))?;
+        
+        // Gerar nonce aleatório
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        
+        // Criar cipher
+        let key = Key::from_slice(&self.encryption_key);
+        let cipher = Aes256Gcm::new(key);
+        
+        // Criptografar
+        let ciphertext = cipher.encrypt(nonce, data.as_ref())
+            .map_err(|e| DatabaseError::EncryptionError(format!("Falha na criptografia: {}", e)))?;
+        
+        // Combinar nonce + ciphertext
+        let mut encrypted_data = Vec::new();
+        encrypted_data.extend_from_slice(&nonce_bytes);
+        encrypted_data.extend_from_slice(&ciphertext);
+        
+        // Salvar arquivo criptografado
+        fs::write(output_path, encrypted_data).await
+            .map_err(|e| DatabaseError::BackupError(format!("Falha ao salvar backup: {}", e)))?;
+        
+        Ok(())
+    }
+
+    async fn verify_backup_integrity(&self, backup_path: &PathBuf, expected_checksum: &str) -> Result<bool, DatabaseError> {
+        let data = fs::read(backup_path).await
+            .map_err(|e| DatabaseError::BackupError(format!("Falha ao ler backup: {}", e)))?;
+        
+        // Extrair nonce e ciphertext
+        if data.len() < 12 {
+            return Ok(false);
+        }
+        
+        let nonce = Nonce::from_slice(&data[..12]);
+        let ciphertext = &data[12..];
+        
+        // Descriptografar para verificar
+        let key = Key::from_slice(&self.encryption_key);
+        let cipher = Aes256Gcm::new(key);
+        
+        match cipher.decrypt(nonce, ciphertext) {
+            Ok(plaintext) => {
+                let mut hasher = Sha256::new();
+                hasher.update(&plaintext);
+                let actual_checksum = format!("{:x}", hasher.finalize());
+                
+                Ok(actual_checksum == expected_checksum)
+            }
+            Err(_) => Ok(false),
+        }
+    }
+
+    async fn cleanup_old_backups(&self) -> Result<(), DatabaseError> {
+        let mut dir = fs::read_dir(&self.backup_dir).await
+            .map_err(|e| DatabaseError::BackupError(format!("Falha ao ler diretório: {}", e)))?;
+        
+        let cutoff = Utc::now() - Duration::hours(24);
+        
+        while let Some(entry) = dir.next_entry().await
+            .map_err(|e| DatabaseError::BackupError(format!("Falha ao iterar diretório: {}", e)))? {
+            
+            let path = entry.path();
+            if path.extension().map_or(false, |ext| ext == "enc" || ext == "meta") {
+                if let Ok(metadata) = fs::metadata(&path).await {
+                    if let Ok(modified) = metadata.modified() {
+                        let datetime: DateTime<Utc> = modified.into();
+                        if datetime < cutoff {
+                            fs::remove_file(&path).await
+                                .map_err(|e| DatabaseError::BackupError(format!("Falha ao remover backup antigo: {}", e)))?;
+                            warn!("Backup antigo removido: {:?}", path);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    fn get_user_count(&self, connection: &rusqlite::Connection) -> Result<u32, DatabaseError> {
+        connection.query_row(
+            "SELECT COUNT(*) FROM users WHERE active = 1",
+            [],
+            |row| row.get::<_, u32>(0),
+        ).map_err(|e| DatabaseError::BackupError(format!("Falha ao contar usuários: {}", e)))
+    }
+
+    async fn get_file_size(&self, path: &PathBuf) -> Result<u64, DatabaseError> {
+        let metadata = fs::metadata(path).await
+            .map_err(|e| DatabaseError::BackupError(format!("Falha ao obter metadata: {}", e)))?;
+        
+        Ok(metadata.len())
+    }
+
+    /// Lista backups disponíveis
+    pub async fn list_backups(&self)
