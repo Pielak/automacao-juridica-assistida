@@ -1,0 +1,96 @@
+[package]
+name = "automacao-juridica-assistida"
+version = "0.1.0"
+edition = "2021"
+authors = ["Equipe Automação Jurídica"]
+description = "Sistema desktop de automação jurídica assistida por IA — Tauri core"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# --- Tauri ---
+tauri = { version = "2", features = ["tray-icon", "devtools"] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-process = "2"
+
+# --- Serialização ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# --- Async runtime ---
+tokio = { version = "1", features = ["full"] }
+
+# --- SQLite com SQLCipher (criptografia AES-256) ---
+# A feature `bundled-sqlcipher` compila SQLCipher junto, garantindo criptografia em repouso.
+rusqlite = { version = "0.31", features = [
+    "bundled-sqlcipher",
+    "column_decltype",
+    "backup",
+    "functions",
+    "trace",
+    "blob",
+] }
+
+# --- Pool de conexões SQLite ---
+r2d2 = "0.8"
+r2d2_sqlite = { version = "0.24", package = "r2d2_sqlite" }
+
+# --- LLM local (llama.cpp bindings) ---
+# TODO: Avaliar se llama-cpp-rs ou ollama-rs é mais estável na versão corrente.
+# llama-cpp-rs requer libclang e cmake no build; ollama-rs requer Ollama daemon rodando.
+llama-cpp-rs = { version = "0.3", optional = true }
+
+# Alternativa: cliente Ollama HTTP (mais simples, menos acoplado)
+# Descomente se preferir Ollama em vez de llama-cpp-rs direto.
+# ollama-rs = { version = "0.2", features = ["stream"], optional = true }
+
+# --- HTTP client (para comunicação com sidecar Python e Ollama) ---
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+
+# --- Criptografia auxiliar ---
+ring = "0.17"           # PBKDF2, HMAC, hashing
+aes-gcm = "0.10"        # Criptografia de arquivos em disco
+rand = "0.8"            # Geração de nonces/salts
+base64 = "0.22"         # Encoding para transporte
+
+# --- Hashing de senhas ---
+argon2 = "0.5"          # Argon2id para hashing de senhas
+
+# --- Logging / Tracing ---
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
+# --- Utilitários ---
+thiserror = "1"         # Erros tipados (usado em domain::errors)
+anyhow = "1"            # Erros ad-hoc em camadas de infra
+chrono = { version = "0.4", features = ["serde"] }  # Datas e prazos jurídicos
+uuid = { version = "1", features = ["v4", "serde"] } # IDs únicos
+dirs = "5"              # Diretórios padrão do SO (app_data, etc.)
+
+# --- Migração de schema ---
+refinery = { version = "0.8", features = ["rusqlite"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+# Feature para habilitar inferência LLM direta via llama.cpp (sem Ollama daemon)
+llm-local = ["llama-cpp-rs"]
+
+# Feature para habilitar cliente Ollama em vez de llama-cpp-rs
+# llm-ollama = ["ollama-rs"]
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"       # Otimizar para tamanho (desktop distributable)
+strip = true
+panic = "abort"
