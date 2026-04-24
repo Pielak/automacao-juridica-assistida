@@ -1,0 +1,109 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/tooling/cli/schema.json",
+  "productName": "Automação Jurídica Assistida",
+  "version": "0.1.0",
+  "identifier": "br.com.automacao-juridica-assistida",
+  "build": {
+    "beforeDevCommand": "cd frontend && npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "cd frontend && npm run build",
+    "frontendDist": "../frontend/dist"
+  },
+  "app": {
+    "title": "Automação Jurídica Assistida",
+    "windows": [
+      {
+        "label": "main",
+        "title": "Automação Jurídica Assistida",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1024,
+        "minHeight": 680,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "maximized": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://api-publica.datajud.cnj.jus.br; worker-src 'self' blob:",
+      "dangerousDisableAssetCspModification": false,
+      "freezePrototype": true
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "migrations/*"
+    ],
+    "externalBin": [
+      "sidecar-python/dist/sidecar-python"
+    ],
+    "copyright": "© 2024 Automação Jurídica Assistida",
+    "category": "BusinessApplication",
+    "shortDescription": "Sistema de automação jurídica assistida por IA local",
+    "longDescription": "Aplicação desktop local-first para automação de processos jurídicos com IA local, pseudonimização de dados sensíveis, integração DataJud e geração de peças jurídicas. Dados criptografados com SQLCipher (AES-256-CBC).",
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "",
+      "wix": null,
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true,
+      "scope": [
+        {
+          "name": "sidecar-python",
+          "cmd": "sidecar-python/dist/sidecar-python",
+          "args": true
+        }
+      ]
+    },
+    "fs": {
+      "scope": [
+        "$APPDATA/**",
+        "$APPDATA/db/**",
+        "$APPDATA/documents/**",
+        "$APPDATA/logs/**",
+        "$APPDATA/exports/**"
+      ]
+    },
+    "dialog": {
+      "open": true,
+      "save": true
+    },
+    "process": {},
+    "os": {},
+    "notification": {
+      "all": true
+    },
+    "clipboard-manager": {
+      "all": false,
+      "writeText": true,
+      "readText": false
+    }
+  }
+}
