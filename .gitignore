@@ -1,0 +1,142 @@
+# ============================================================================
+# Automação Jurídica Assistida — .gitignore
+# Ignora artefatos de build Rust/Node/Python, SQLite, modelos LLM, .env
+# ============================================================================
+
+# ────────────────────────────────────────────────────────────────────────────
+# Ambiente e segredos
+# ────────────────────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ────────────────────────────────────────────────────────────────────────────
+# Rust / Tauri (src-tauri)
+# ────────────────────────────────────────────────────────────────────────────
+src-tauri/target/
+src-tauri/Cargo.lock
+src-tauri/WixTools/
+src-tauri/gen/
+
+# Tauri build bundles (installers, dmg, msi, deb, AppImage, etc.)
+src-tauri/target/release/bundle/
+
+# ────────────────────────────────────────────────────────────────────────────
+# Node / Frontend
+# ────────────────────────────────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.tsbuildinfo
+*.tsbuildinfo
+
+# ────────────────────────────────────────────────────────────────────────────
+# Python / Sidecar
+# ────────────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+sidecar-python/.venv/
+sidecar-python/venv/
+sidecar-python/env/
+sidecar-python/.env/
+sidecar-python/dist/
+sidecar-python/build/
+sidecar-python/*.egg-info/
+sidecar-python/.eggs/
+sidecar-python/.mypy_cache/
+sidecar-python/.ruff_cache/
+sidecar-python/.pytest_cache/
+sidecar-python/htmlcov/
+sidecar-python/.coverage
+sidecar-python/coverage.xml
+
+# Virtualenvs genéricos
+.venv/
+venv/
+env/
+
+# ────────────────────────────────────────────────────────────────────────────
+# SQLite / SQLCipher — bancos de dados locais
+# ────────────────────────────────────────────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlcipher
+data/
+
+# ────────────────────────────────────────────────────────────────────────────
+# Modelos LLM locais (llama.cpp / Ollama)
+# Podem ter vários GB — nunca versionar
+# ────────────────────────────────────────────────────────────────────────────
+models/
+*.gguf
+*.ggml
+*.bin
+!sidecar-python/src/**/*.bin
+*.safetensors
+
+# Ollama local cache
+.ollama/
+
+# ────────────────────────────────────────────────────────────────────────────
+# Logs e auditoria local
+# ────────────────────────────────────────────────────────────────────────────
+logs/
+*.log
+*.log.*
+
+# ────────────────────────────────────────────────────────────────────────────
+# IDEs e editores
+# ────────────────────────────────────────────────────────────────────────────
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ────────────────────────────────────────────────────────────────────────────
+# Arquivos temporários e caches diversos
+# ────────────────────────────────────────────────────────────────────────────
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+
+# ────────────────────────────────────────────────────────────────────────────
+# Documentos gerados (peças jurídicas renderizadas)
+# ────────────────────────────────────────────────────────────────────────────
+output/
+generated/
+
+# ────────────────────────────────────────────────────────────────────────────
+# Cobertura e testes
+# ────────────────────────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+*.lcov
+target/llvm-cov/
+
+# ────────────────────────────────────────────────────────────────────────────
+# Misc
+# ────────────────────────────────────────────────────────────────────────────
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+!*.example.pem
