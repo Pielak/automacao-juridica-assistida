@@ -1,0 +1,274 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "automacao-juridica-assistida"
+version = "0.1.0"
+description = "Backend da plataforma de Automação Jurídica Assistida — API REST com FastAPI, Clean Architecture e integração com IA (Anthropic Claude)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [
+    { name = "Equipe Automação Jurídica", email = "dev@automacaojuridica.com.br" },
+]
+keywords = ["juridico", "automacao", "fastapi", "ia", "anthropic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Intended Audience :: Legal Industry",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business",
+    "Typing :: Typed",
+]
+
+# ──────────────────────────────────────────────
+# Dependências principais de produção
+# ──────────────────────────────────────────────
+dependencies = [
+    # --- Framework web e servidor ---
+    "fastapi>=0.100,<1.0",
+    "uvicorn[standard]>=0.23,<1.0",
+    "python-multipart>=0.0.6",
+
+    # --- Validação e serialização ---
+    "pydantic>=2.0,<3.0",
+    "pydantic-settings>=2.0,<3.0",
+
+    # --- Banco de dados ---
+    "sqlalchemy[asyncio]>=2.0,<3.0",
+    "asyncpg>=0.28,<1.0",
+    "alembic>=1.12,<2.0",
+
+    # --- Autenticação e segurança ---
+    "python-jose[cryptography]>=3.3,<4.0",
+    "passlib[bcrypt]>=1.7,<2.0",
+    "pyotp>=2.9,<3.0",
+
+    # --- Processamento assíncrono ---
+    "celery[redis]>=5.3,<6.0",
+    "redis>=5.0,<6.0",
+
+    # --- Integração com IA (Anthropic Claude) ---
+    "anthropic>=0.25,<1.0",
+    "httpx>=0.25,<1.0",
+    "tenacity>=8.2,<9.0",
+
+    # --- Rate limiting ---
+    "slowapi>=0.1.9,<1.0",
+
+    # --- Logging estruturado ---
+    "structlog>=23.1,<25.0",
+
+    # --- Utilitários ---
+    "python-dotenv>=1.0,<2.0",
+    "orjson>=3.9,<4.0",
+
+    # --- State machine para ciclo de vida de documentos DataJud ---
+    "python-statemachine>=2.1,<3.0",
+]
+
+# ──────────────────────────────────────────────
+# Grupos de dependências opcionais
+# ──────────────────────────────────────────────
+[project.optional-dependencies]
+# Dependências para desenvolvimento local
+dev = [
+    "ruff>=0.3,<1.0",
+    "mypy>=1.8,<2.0",
+    "pre-commit>=3.6,<4.0",
+    "ipython>=8.0,<9.0",
+]
+
+# Dependências para execução de testes
+test = [
+    "pytest>=8.0,<9.0",
+    "pytest-asyncio>=0.23,<1.0",
+    "pytest-cov>=4.1,<6.0",
+    "httpx>=0.25,<1.0",
+    "factory-boy>=3.3,<4.0",
+    "faker>=22.0,<30.0",
+    "aiosqlite>=0.19,<1.0",
+]
+
+# Dependências para documentação
+docs = [
+    "mkdocs>=1.5,<2.0",
+    "mkdocs-material>=9.5,<10.0",
+    "mkdocstrings[python]>=0.24,<1.0",
+]
+
+# TODO: Avaliar inclusão de FAISS ou Milvus para busca semântica vetorial (pendente decisão G002 ADR)
+# vector_search = [
+#     "faiss-cpu>=1.7,<2.0",  # ou "pymilvus>=2.3,<3.0"
+# ]
+
+# ──────────────────────────────────────────────
+# Scripts de conveniência
+# ──────────────────────────────────────────────
+[project.scripts]
+# Iniciar servidor de desenvolvimento
+aja-server = "uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+# Executar worker Celery
+aja-worker = "celery -A app.infrastructure.celery_app worker --loglevel=info"
+
+# ──────────────────────────────────────────────
+# Configuração do Hatch (build)
+# ──────────────────────────────────────────────
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+# ══════════════════════════════════════════════
+# FERRAMENTAS DE QUALIDADE DE CÓDIGO
+# ══════════════════════════════════════════════
+
+# ──────────────────────────────────────────────
+# Ruff — linter e formatter unificado
+# ──────────────────────────────────────────────
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort — ordenação de imports
+    "N",      # pep8-naming
+    "UP",     # pyupgrade — modernização de sintaxe
+    "B",      # flake8-bugbear — detecção de bugs comuns
+    "A",      # flake8-builtins — shadowing de builtins
+    "S",      # flake8-bandit — verificações de segurança
+    "T20",    # flake8-print — evitar print() em produção
+    "SIM",    # flake8-simplify — simplificações
+    "RUF",    # regras específicas do Ruff
+    "ASYNC",  # regras para código assíncrono
+    "C4",     # flake8-comprehensions
+    "DTZ",    # flake8-datetimez — uso correto de timezone
+    "PIE",    # flake8-pie — melhorias diversas
+    "PT",     # flake8-pytest-style
+    "RSE",    # flake8-raise
+    "RET",    # flake8-return
+    "TCH",    # flake8-type-checking — imports apenas para tipagem
+]
+ignore = [
+    "S101",   # Permitir assert em testes
+    "B008",   # Permitir Depends() como default em FastAPI
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",   # assert é esperado em testes
+    "S106",   # senhas hardcoded em fixtures de teste são aceitáveis
+    "T20",    # print em testes para debug é aceitável
+]
+"app/infrastructure/database/migrations/**/*.py" = [
+    "E501",   # linhas longas em migrações geradas pelo Alembic
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+force-single-line = false
+lines-after-imports = 2
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+
+# ──────────────────────────────────────────────
+# MyPy — verificação estática de tipos
+# ──────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+namespace_packages = true
+explicit_package_bases = true
+
+# Plugins para melhor suporte a frameworks
+plugins = [
+    "pydantic.mypy",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "celery.*",
+    "passlib.*",
+    "jose.*",
+    "pyotp.*",
+    "slowapi.*",
+    "statemachine.*",
+]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# ──────────────────────────────────────────────
+# Pytest — configuração de testes
+# ──────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--tb=short",
+    "-ra",
+    "--cov=app",
+    "--cov-report=term-missing",
+    "--cov-report=html:reports/coverage",
+    "--cov-fail-under=80",
+]
+markers = [
+    "unit: Testes unitários — sem dependências externas",
+    "integration: Testes de integração — requerem banco de dados e/ou serviços",
+    "e2e: Testes end-to-end — requerem ambiente completo",
+    "slow: Testes lentos — excluídos da execução rápida",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:passlib.*",
+]
+
+# ──────────────────────────────────────────────
+# Coverage — cobertura de testes
+# ──────────────────────────────────────────────
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = [
+    "app/infrastructure/database/migrations/*",
+    "app/main.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.",
+    "raise NotImplementedError",
+    "pass",
+    "\\.\\.\\.",
+]
+show_missing = true
+precision = 2
