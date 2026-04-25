@@ -1,6 +1,6 @@
 # Automação Jurídica Assistida
 
-> Sistema desktop local-first de automação jurídica assistida por IA, com foco em **sigilo**, **operação offline** e **processamento local** de dados sensíveis.
+> Plataforma de automação jurídica assistida por inteligência artificial, projetada para auxiliar profissionais do Direito na análise, elaboração e gestão de documentos jurídicos com suporte de IA (Claude/Anthropic).
 
 ---
 
@@ -9,17 +9,16 @@
 - [Visão Geral](#visão-geral)
 - [Arquitetura](#arquitetura)
 - [Stack Tecnológica](#stack-tecnológica)
-- [Estrutura do Projeto](#estrutura-do-projeto)
 - [Pré-requisitos](#pré-requisitos)
-- [Setup de Desenvolvimento](#setup-de-desenvolvimento)
+- [Configuração do Ambiente](#configuração-do-ambiente)
 - [Executando o Projeto](#executando-o-projeto)
-- [Banco de Dados](#banco-de-dados)
-- [Sidecar Python](#sidecar-python)
-- [IA Local](#ia-local)
-- [Decisões Arquiteturais](#decisões-arquiteturais)
-- [Segurança e Sigilo](#segurança-e-sigilo)
-- [Variáveis de Ambiente](#variáveis-de-ambiente)
-- [Scripts Úteis](#scripts-úteis)
+- [Estrutura de Diretórios](#estrutura-de-diretórios)
+- [Módulos Funcionais](#módulos-funcionais)
+- [Autenticação e Segurança](#autenticação-e-segurança)
+- [Integração com IA (Anthropic/Claude)](#integração-com-ia-anthropicclaude)
+- [Testes](#testes)
+- [Migrações de Banco de Dados](#migrações-de-banco-de-dados)
+- [Deploy](#deploy)
 - [Contribuição](#contribuição)
 - [Licença](#licença)
 
@@ -27,576 +26,637 @@
 
 ## Visão Geral
 
-O **Automação Jurídica Assistida** é uma aplicação desktop construída com [Tauri 2.x](https://v2.tauri.app/) que auxilia profissionais do Direito em:
+O **Automação Jurídica Assistida** é um sistema web que combina um portal autenticado (SPA) com uma API REST robusta para oferecer:
 
-- **Gestão de processos jurídicos** — cadastro, acompanhamento e controle de prazos
-- **Geração de peças jurídicas** — templates Jinja2 com preenchimento assistido por IA
-- **Chat com IA local** — análise de documentos e requisitos usando LLMs rodando localmente (llama.cpp / Ollama)
-- **Consulta ao DataJud** — integração com a API pública do CNJ para acompanhamento processual
-- **Pseudonimização automática** — remoção de PII antes de qualquer processamento por IA
-- **Auditoria completa** — logs estruturados de todas as operações sensíveis
-
-Todo o processamento ocorre **localmente na máquina do usuário**, sem envio de dados para servidores externos, garantindo conformidade com sigilo profissional (OAB) e LGPD.
+- **Análise inteligente de documentos jurídicos** com suporte de IA generativa (Claude da Anthropic)
+- **Gestão do ciclo de vida de documentos** com state machine integrada
+- **Chat assistido por IA** para consultas jurídicas contextualizadas
+- **Integração com DataJud** para consulta e acompanhamento processual
+- **Busca semântica** em bases de jurisprudência e documentos
+- **Auditoria completa** de todas as operações para conformidade regulatória
+- **Controle de acesso granular** via RBAC (Role-Based Access Control) com MFA
 
 ---
 
 ## Arquitetura
 
+### Estilo: Monólito Modular com Clean Architecture
+
+O projeto adota uma arquitetura de **monólito modular** seguindo os princípios de **Clean Architecture (Ports & Adapters)**. Essa abordagem permite evolução incremental sem a complexidade prematura de microserviços.
+
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Tauri Desktop App                     │
-│                                                         │
-│  ┌───────────────────────────────────────────────────┐  │
-│  │           Frontend (React + TypeScript)            │  │
-│  │         WebView — Vite — Tailwind CSS             │  │
-│  │  Formulários · Chat IA · Dashboard · Upload       │  │
-│  └──────────────────────┬────────────────────────────┘  │
-│                         │ IPC (invoke / events)         │
-│  ┌──────────────────────▼────────────────────────────┐  │
-│  │          Tauri Core (Rust)                        │  │
-│  │  Commands · RBAC · Crypto · SQLCipher · IPC       │  │
-│  │                                                   │  │
-│  │  ┌─────────────┐  ┌────────────┐  ┌───────────┐  │  │
-│  │  │   Domain     │  │ Commands   │  │   Infra   │  │  │
-│  │  │  Entities    │  │ processos  │  │ database  │  │  │
-│  │  │  Errors      │  │ documentos │  │ crypto    │  │  │
-│  │  │  Rules       │  │ ia_chat    │  │ sidecar   │  │  │
-│  │  └─────────────┘  └────────────┘  └─────┬─────┘  │  │
-│  └─────────────────────────────────────────┬─────────┘  │
-│                                            │            │
-│  ┌─────────────────────────────────────────▼─────────┐  │
-│  │         Sidecar Python (subprocess)               │  │
-│  │  IA (llama.cpp/Ollama) · Pseudonimização          │  │
-│  │  DataJud Client · Templates Jinja2                │  │
-│  └───────────────────────────────────────────────────┘  │
-│                                                         │
-│  ┌───────────────────────────────────────────────────┐  │
-│  │  SQLite + SQLCipher (AES-256-CBC, PBKDF2 100k)   │  │
-│  │  FTS5 (busca textual) · JSON1 (auditoria)        │  │
-│  └───────────────────────────────────────────────────┘  │
+│                    APRESENTAÇÃO                         │
+│         React SPA (Vite + TypeScript)                   │
+│         Nginx (proxy reverso + estáticos)               │
+├─────────────────────────────────────────────────────────┤
+│                      API (FastAPI)                       │
+│   Routers modulares │ Middleware JWT │ Rate Limiting     │
+│   OpenAPI docs      │ Logging (correlation ID)          │
+│   Validação Pydantic v2                                 │
+├─────────────────────────────────────────────────────────┤
+│                   APLICAÇÃO (Use Cases)                  │
+│   Use cases por módulo │ Orquestração de regras         │
+│   Ports (interfaces)   │ DTOs entre camadas             │
+├─────────────────────────────────────────────────────────┤
+│                      DOMÍNIO                            │
+│   Entidades │ Value Objects │ Regras de negócio         │
+│   Eventos de domínio │ Interfaces de repositório        │
+├─────────────────────────────────────────────────────────┤
+│                   INFRAESTRUTURA                        │
+│   PostgreSQL (SQLAlchemy 2.0 + asyncpg)                 │
+│   Redis (cache + sessões + broker Celery)               │
+│   Anthropic SDK (Claude) │ FAISS/Milvus (vetorial)      │
+│   Celery (tarefas assíncronas) │ S3/MinIO (arquivos)    │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Camadas (Clean Architecture)
+### Princípios Arquiteturais
 
-| Camada | Localização | Responsabilidade |
-|---|---|---|
-| **Presentation** | `frontend/src/` | UI React, formulários, chat, dashboard |
-| **IPC Bridge** | Tauri IPC (`invoke` / `events`) | Comunicação tipada JS ↔ Rust com streaming |
-| **Application** | `src-tauri/src/commands/` | Orquestração, RBAC, validação, criptografia |
-| **Domain** | `src-tauri/src/domain/` | Entidades puras, regras de negócio, 5 níveis de sigilo |
-| **Infrastructure** | `src-tauri/src/infra/` | SQLCipher, llama.cpp, pseudonimização, DataJud, filesystem |
-| **Sidecar** | `sidecar-python/src/` | Processamento pesado: IA, DataJud, templates |
+- **Separação de responsabilidades**: cada camada tem papel bem definido
+- **Inversão de dependência**: camadas internas não conhecem as externas
+- **Módulos isolados**: auth, documents, analysis, chat, audit — cada um com interfaces próprias
+- **Testabilidade**: ports permitem mocks e testes unitários sem infraestrutura
 
 ---
 
 ## Stack Tecnológica
 
-### Desktop Runtime
-
-| Componente | Tecnologia | Justificativa |
-|---|---|---|
-| Framework Desktop | **Tauri 2.x** | Leve, seguro, WebView nativo, IPC Rust↔JS |
-| Core Backend | **Rust** | Performance, segurança de memória, criptografia |
-| Sidecar | **Python 3.11+** | Ecossistema IA/ML, templates, integração DataJud |
-
 ### Frontend
 
-| Componente | Tecnologia |
+| Tecnologia | Versão | Propósito |
+|---|---|---|
+| React | 18+ | Framework de UI |
+| Vite | 5+ | Build tool com HMR instantâneo |
+| TypeScript | 5+ | Tipagem estática |
+| React Hook Form + Zod | latest | Validação tipada de formulários |
+| TanStack Query | latest | Gerenciamento de estado servidor/cache |
+| React Router | v6 | Roteamento com guards de autenticação |
+| Tailwind CSS | latest | Sistema de design responsivo |
+| Axios | latest | Cliente HTTP com interceptors JWT |
+| react-dropzone | latest | Upload de arquivos com validação |
+
+### Backend
+
+| Tecnologia | Versão | Propósito |
+|---|---|---|
+| Python | 3.11+ | Linguagem principal |
+| FastAPI | 0.100+ | Framework REST com OpenAPI automático |
+| Pydantic | v2 | Serialização/validação de alta performance |
+| SQLAlchemy | 2.0 | ORM assíncrono |
+| asyncpg | latest | Driver PostgreSQL assíncrono |
+| Alembic | latest | Migrações de banco de dados |
+| Celery | 5+ | Processamento assíncrono de tarefas |
+| python-jose / PyJWT | latest | Autenticação JWT (RS256) |
+| pyotp | latest | MFA via TOTP |
+| httpx | latest | Cliente HTTP assíncrono |
+| anthropic | latest | SDK oficial da Anthropic (Claude) |
+| tenacity | latest | Retry e circuit breaker |
+| slowapi | latest | Rate limiting |
+| structlog | latest | Logs estruturados |
+| passlib[bcrypt] | latest | Hashing de senhas |
+
+### Infraestrutura
+
+| Tecnologia | Propósito |
 |---|---|
-| Framework | React 18+ |
-| Linguagem | TypeScript (strict mode) |
-| Build Tool | Vite |
-| Estilização | Tailwind CSS |
-| Formulários | React Hook Form + Zod |
-| Estado/Cache | TanStack Query (React Query) |
-| Roteamento | React Router v6 |
-| Upload | React Dropzone |
-| Datas | date-fns |
-
-### Backend Rust (Tauri Core)
-
-| Componente | Tecnologia |
-|---|---|
-| Banco de Dados | rusqlite + SQLCipher |
-| Serialização | serde + serde_json |
-| Async Runtime | tokio |
-| IA Local | llama-cpp-rs ou Ollama client |
-
-### Sidecar Python
-
-| Componente | Tecnologia |
-|---|---|
-| Templates | Jinja2 |
-| Validação | Pydantic v2 |
-| Logs | structlog |
-| HTTP Client | httpx |
-| Retry | tenacity |
-| Hashing | argon2-cffi |
-
-### Banco de Dados
-
-| Componente | Tecnologia |
-|---|---|
-| Engine | SQLite 3.x |
-| Criptografia | SQLCipher (AES-256-CBC, PBKDF2 100k iterações) |
-| Busca Textual | FTS5 |
-| JSON | JSON1 extension |
-
----
-
-## Estrutura do Projeto
-
-```
-automacao-juridica-assistida/
-├── README.md                          # Este arquivo
-├── .gitignore                         # Regras de exclusão do Git
-├── .env.example                       # Template de variáveis de ambiente
-│
-├── src-tauri/                         # Backend Rust (Tauri core)
-│   ├── Cargo.toml                     # Dependências Rust
-│   ├── tauri.conf.json                # Configuração Tauri (janela, permissões, sidecar)
-│   ├── build.rs                       # Build script Rust
-│   ├── migrations/
-│   │   └── 001_initial_schema.sql     # Schema inicial SQLite/SQLCipher
-│   └── src/
-│       ├── main.rs                    # Entry point Tauri
-│       ├── lib.rs                     # Registro de comandos e setup
-│       ├── domain/
-│       │   ├── mod.rs                 # Módulo domain
-│       │   ├── entities.rs            # Entidades: Processo, Documento, Usuário
-│       │   └── errors.rs             # Erros de domínio tipados
-│       ├── commands/
-│       │   ├── mod.rs                 # Módulo commands
-│       │   ├── processos.rs           # Comandos IPC: CRUD processos
-│       │   ├── documentos.rs          # Comandos IPC: upload/gestão documentos
-│       │   └── ia_chat.rs             # Comandos IPC: chat IA com streaming
-│       └── infra/
-│           ├── mod.rs                 # Módulo infraestrutura
-│           ├── database.rs            # Conexão SQLCipher, migrations, pool
-│           ├── crypto.rs              # Criptografia, derivação de chaves
-│           └── sidecar.rs             # Gerenciamento do processo Python
-│
-├── sidecar-python/                    # Sidecar Python (IA, DataJud, templates)
-│   ├── pyproject.toml                 # Dependências e config Python
-│   └── src/
-│       ├── __init__.py
-│       ├── main.py                    # Entry point sidecar (stdin/stdout ou socket)
-│       ├── datajud/
-│       │   ├── __init__.py
-│       │   ├── client.py              # Cliente HTTP DataJud API
-│       │   ├── models.py              # Modelos Pydantic para DataJud
-│       │   ├── query_builder.py       # Construtor de queries DataJud
-│       │   ├── pagination.py          # Paginação de resultados
-│       │   └── audit.py               # Auditoria de consultas DataJud
-│       ├── ia/
-│       │   ├── __init__.py
-│       │   ├── llm_service.py         # Interface com llama.cpp/Ollama
-│       │   └── pseudonymizer.py       # Motor de pseudonimização de PII
-│       └── templates/
-│           ├── __init__.py
-│           └── engine.py              # Engine Jinja2 para peças jurídicas
-│
-└── frontend/                          # Frontend React (Tauri WebView)
-    ├── package.json                   # Dependências Node.js
-    ├── tsconfig.json                  # Configuração TypeScript
-    ├── vite.config.ts                 # Configuração Vite
-    ├── tailwind.config.ts             # Configuração Tailwind CSS
-    ├── index.html                     # HTML entry point
-    └── src/
-        └── main.tsx                   # React entry point
-```
+| PostgreSQL 15+ | Banco de dados relacional principal |
+| Redis 7+ | Cache, sessões e broker Celery |
+| Nginx | Proxy reverso e servidor de estáticos |
+| Docker + Docker Compose | Containerização e orquestração local |
+| MinIO (ou S3) | Armazenamento de arquivos/documentos |
 
 ---
 
 ## Pré-requisitos
 
-### Obrigatórios
+Antes de iniciar, certifique-se de ter instalado:
 
-| Ferramenta | Versão Mínima | Instalação |
-|---|---|---|
-| **Rust** | 1.75+ | [rustup.rs](https://rustup.rs/) |
-| **Node.js** | 18 LTS+ | [nodejs.org](https://nodejs.org/) |
-| **Python** | 3.11+ | [python.org](https://www.python.org/) |
-| **Tauri CLI** | 2.x | `cargo install tauri-cli --version "^2"` |
-| **SQLCipher** | 4.x | Ver instruções por SO abaixo |
+- **Docker** 24+ e **Docker Compose** v2+
+- **Node.js** 20 LTS+ e **npm** 10+ (para desenvolvimento frontend)
+- **Python** 3.11+ e **pip** (para desenvolvimento backend)
+- **Git** 2.40+
 
-### Instalação do SQLCipher por SO
+Para desenvolvimento local sem Docker:
 
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install libsqlcipher-dev sqlcipher
-```
-
-**macOS:**
-```bash
-brew install sqlcipher
-export SQLCIPHER_LIB_DIR=$(brew --prefix sqlcipher)/lib
-export SQLCIPHER_INCLUDE_DIR=$(brew --prefix sqlcipher)/include
-```
-
-**Windows:**
-```powershell
-# Recomendado: usar vcpkg
-vcpkg install sqlcipher:x64-windows
-# Ou baixar binários pré-compilados de https://github.com/nickolay/sqlcipher-cmake
-```
-
-### Opcionais (para IA local)
-
-| Ferramenta | Propósito | Instalação |
-|---|---|---|
-| **Ollama** | Servidor LLM local | [ollama.ai](https://ollama.ai/) |
-| **llama.cpp** | Inferência LLM alternativa | [github.com/ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp) |
+- **PostgreSQL** 15+
+- **Redis** 7+
 
 ---
 
-## Setup de Desenvolvimento
+## Configuração do Ambiente
 
 ### 1. Clonar o repositório
 
 ```bash
-git clone <repo-url> automacao-juridica-assistida
+git clone https://github.com/sua-org/automacao-juridica-assistida.git
 cd automacao-juridica-assistida
 ```
 
 ### 2. Configurar variáveis de ambiente
 
+Copie o arquivo de exemplo e ajuste conforme necessário:
+
 ```bash
 cp .env.example .env
-# Editar .env com suas configurações locais
 ```
 
-### 3. Instalar dependências do Frontend
+Variáveis obrigatórias:
 
-```bash
-cd frontend
-npm install
-cd ..
+```env
+# Banco de Dados
+DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/automacao_juridica
+DATABASE_URL_SYNC=postgresql://user:password@localhost:5432/automacao_juridica
+
+# Redis
+REDIS_URL=redis://localhost:6379/0
+CELERY_BROKER_URL=redis://localhost:6379/1
+CELERY_RESULT_BACKEND=redis://localhost:6379/2
+
+# Autenticação
+JWT_SECRET_KEY=<gerar-chave-segura>
+JWT_ALGORITHM=RS256
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+JWT_REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# Anthropic (Claude)
+ANTHROPIC_API_KEY=<sua-chave-api>
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
+ANTHROPIC_MAX_TOKENS=4096
+
+# Aplicação
+APP_ENV=development
+APP_DEBUG=true
+APP_SECRET_KEY=<gerar-chave-segura>
+CORS_ORIGINS=http://localhost:5173
+
+# Armazenamento de Arquivos
+STORAGE_BACKEND=minio
+MINIO_ENDPOINT=localhost:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=documentos-juridicos
 ```
 
-### 4. Instalar dependências do Sidecar Python
+### 3. Iniciar com Docker Compose (recomendado)
 
 ```bash
-cd sidecar-python
+# Subir toda a infraestrutura + aplicação
+docker compose up -d
+
+# Verificar status dos serviços
+docker compose ps
+
+# Acompanhar logs
+docker compose logs -f
+```
+
+### 4. Configuração manual (desenvolvimento)
+
+#### Backend
+
+```bash
+# Criar e ativar ambiente virtual
+cd backend
 python -m venv .venv
 source .venv/bin/activate  # Linux/macOS
 # .venv\Scripts\activate   # Windows
-pip install -e ".[dev]"
-cd ..
+
+# Instalar dependências
+pip install -r requirements.txt
+pip install -r requirements-dev.txt  # dependências de desenvolvimento
+
+# Executar migrações
+alembic upgrade head
+
+# Iniciar servidor de desenvolvimento
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 5. Verificar dependências Rust
+#### Frontend
 
 ```bash
-cd src-tauri
-cargo check
-cd ..
+# Instalar dependências
+cd frontend
+npm install
+
+# Iniciar servidor de desenvolvimento
+npm run dev
 ```
 
-### 6. (Opcional) Baixar modelo de IA local
+#### Worker Celery
 
 ```bash
-# Com Ollama:
-ollama pull llama3.1:8b
-
-# Ou baixar GGUF manualmente para uso com llama.cpp
-# TODO: Documentar modelos recomendados para uso jurídico em português
+# Em um terminal separado, dentro do diretório backend com venv ativado
+celery -A app.infrastructure.celery_app worker --loglevel=info
 ```
 
 ---
 
 ## Executando o Projeto
 
-### Modo Desenvolvimento (com hot-reload)
+Após a configuração, os serviços estarão disponíveis em:
 
-```bash
-# Na raiz do projeto:
-cargo tauri dev
+| Serviço | URL | Descrição |
+|---|---|---|
+| Frontend (SPA) | http://localhost:5173 | Portal autenticado React |
+| Backend (API) | http://localhost:8000 | API REST FastAPI |
+| Documentação API | http://localhost:8000/docs | Swagger UI (OpenAPI) |
+| Documentação API (alt) | http://localhost:8000/redoc | ReDoc |
+| MinIO Console | http://localhost:9001 | Console de gerenciamento de arquivos |
+| Flower (Celery) | http://localhost:5555 | Monitoramento de tarefas Celery |
+
+---
+
+## Estrutura de Diretórios
+
+```
+automacao-juridica-assistida/
+├── README.md                          # Este arquivo
+├── docker-compose.yml                 # Orquestração de containers
+├── .env.example                       # Template de variáveis de ambiente
+├── .gitignore                         # Arquivos ignorados pelo Git
+│
+├── backend/                           # Aplicação backend (Python/FastAPI)
+│   ├── alembic/                       # Migrações de banco de dados
+│   │   ├── versions/                  # Arquivos de migração
+│   │   └── env.py                     # Configuração do Alembic
+│   ├── app/
+│   │   ├── main.py                    # Ponto de entrada FastAPI
+│   │   ├── config.py                  # Configurações da aplicação
+│   │   │
+│   │   ├── domain/                    # Camada de domínio
+│   │   │   ├── entities/              # Entidades de domínio
+│   │   │   ├── value_objects/         # Value Objects
+│   │   │   ├── events/                # Eventos de domínio
+│   │   │   └── interfaces/            # Interfaces (ports) de repositório
+│   │   │
+│   │   ├── application/               # Camada de aplicação
+│   │   │   ├── use_cases/             # Casos de uso por módulo
+│   │   │   │   ├── auth/              # Autenticação e autorização
+│   │   │   │   ├── documents/         # Gestão de documentos
+│   │   │   │   ├── analysis/          # Análise com IA
+│   │   │   │   ├── chat/              # Chat assistido
+│   │   │   │   └── audit/             # Auditoria
+│   │   │   ├── dtos/                  # Data Transfer Objects
+│   │   │   └── services/              # Serviços de aplicação
+│   │   │
+│   │   ├── infrastructure/            # Camada de infraestrutura
+│   │   │   ├── database/              # Configuração e modelos SQLAlchemy
+│   │   │   ├── repositories/          # Implementações de repositório
+│   │   │   ├── external/              # Integrações externas (Anthropic, DataJud)
+│   │   │   ├── celery_app.py          # Configuração do Celery
+│   │   │   └── storage/               # Armazenamento de arquivos
+│   │   │
+│   │   └── api/                       # Camada de API (apresentação)
+│   │       ├── routers/               # Routers FastAPI por módulo
+│   │       ├── middleware/            # Middlewares (auth, logging, rate limit)
+│   │       ├── dependencies/          # Injeção de dependências
+│   │       └── schemas/               # Schemas Pydantic de request/response
+│   │
+│   ├── tests/                         # Testes do backend
+│   │   ├── unit/                      # Testes unitários
+│   │   ├── integration/               # Testes de integração
+│   │   └── conftest.py                # Fixtures compartilhadas
+│   │
+│   ├── requirements.txt               # Dependências de produção
+│   ├── requirements-dev.txt           # Dependências de desenvolvimento
+│   ├── Dockerfile                     # Imagem Docker do backend
+│   ├── alembic.ini                    # Configuração do Alembic
+│   └── pyproject.toml                 # Configuração do projeto Python
+│
+├── frontend/                          # Aplicação frontend (React/TypeScript)
+│   ├── public/                        # Arquivos estáticos públicos
+│   ├── src/
+│   │   ├── main.tsx                   # Ponto de entrada React
+│   │   ├── App.tsx                    # Componente raiz
+│   │   ├── vite-env.d.ts              # Tipos do Vite
+│   │   │
+│   │   ├── pages/                     # Páginas/rotas da aplicação
+│   │   ├── components/                # Componentes reutilizáveis
+│   │   │   ├── ui/                    # Componentes de UI base
+│   │   │   ├── forms/                 # Componentes de formulário
+│   │   │   └── layout/                # Componentes de layout
+│   │   │
+│   │   ├── hooks/                     # Custom hooks
+│   │   ├── services/                  # Serviços de API (Axios)
+│   │   ├── stores/                    # Estado global (se necessário)
+│   │   ├── types/                     # Tipos TypeScript compartilhados
+│   │   ├── utils/                     # Utilitários
+│   │   ├── guards/                    # Guards de rota (autenticação)
+│   │   └── styles/                    # Estilos globais e configuração Tailwind
+│   │
+│   ├── tests/                         # Testes do frontend
+│   ├── index.html                     # HTML raiz
+│   ├── vite.config.ts                 # Configuração do Vite
+│   ├── tailwind.config.ts             # Configuração do Tailwind CSS
+│   ├── tsconfig.json                  # Configuração do TypeScript
+│   ├── package.json                   # Dependências e scripts
+│   └── Dockerfile                     # Imagem Docker do frontend
+│
+├── nginx/                             # Configuração do Nginx
+│   └── nginx.conf                     # Proxy reverso + estáticos
+│
+└── docs/                              # Documentação adicional
+    ├── adr/                           # Architecture Decision Records
+    ├── api/                           # Documentação complementar da API
+    └── guides/                        # Guias de uso e operação
 ```
 
-Isso irá:
-1. Iniciar o Vite dev server para o frontend (hot-reload)
-2. Compilar e executar o backend Rust (Tauri)
-3. O sidecar Python será iniciado sob demanda pelo Rust
+---
 
-### Build de Produção
+## Módulos Funcionais
 
-```bash
-cargo tauri build
+### Auth (Autenticação e Autorização)
+- Registro e login de usuários
+- Autenticação JWT com RS256
+- Refresh tokens com rotação
+- MFA via TOTP (Google Authenticator / Authy)
+- Gestão de sessões
+- RBAC com perfis granulares
+
+### Documents (Gestão de Documentos)
+- Upload de documentos jurídicos (PDF, DOCX, etc.)
+- Validação de tipo, tamanho e varredura de segurança
+- Ciclo de vida com state machine (rascunho → revisão → aprovado → arquivado)
+- Versionamento de documentos
+- Integração com DataJud para consulta processual
+
+### Analysis (Análise com IA)
+- Análise de documentos jurídicos via Claude (Anthropic)
+- Extração de cláusulas, riscos e pontos de atenção
+- Sugestões de melhorias e adequações
+- Processamento assíncrono via Celery para documentos extensos
+- Circuit breaker e retry para resiliência na comunicação com a API
+
+### Chat (Chat Assistido por IA)
+- Chat contextualizado com documentos carregados
+- Histórico de conversas persistido
+- Referências cruzadas com jurisprudência
+- Rate limiting por usuário
+
+### Audit (Auditoria)
+- Log de todas as operações sensíveis
+- Trilha de auditoria imutável
+- Relatórios de conformidade
+- Retenção configurável de logs
+
+---
+
+## Autenticação e Segurança
+
+O sistema implementa múltiplas camadas de segurança:
+
+### Autenticação
+- **JWT com RS256**: tokens assinados com chave assimétrica
+- **Refresh tokens**: rotação automática para sessões longas
+- **MFA obrigatório**: TOTP via Google Authenticator ou Authy
+- **Hashing de senhas**: bcrypt via passlib
+
+### Autorização
+- **RBAC**: controle de acesso baseado em papéis
+- **Perfis**: Administrador, Advogado Sênior, Advogado, Estagiário, Auditor
+- **Guards de rota**: proteção tanto no frontend quanto no backend
+
+### Segurança da API
+- **Rate limiting**: via slowapi para prevenção de abuso
+- **CORS**: configuração restritiva por ambiente
+- **Validação de entrada**: Pydantic v2 em todos os endpoints
+- **Headers de segurança**: CSP, X-Frame-Options, etc.
+- **Request ID correlation**: rastreabilidade de requisições
+
+### Segurança de Dados
+- **Criptografia em trânsito**: TLS/HTTPS obrigatório em produção
+- **Criptografia em repouso**: campos sensíveis criptografados no banco
+- **Auditoria**: log imutável de todas as operações
+- **LGPD**: conformidade com Lei Geral de Proteção de Dados
+
+---
+
+## Integração com IA (Anthropic/Claude)
+
+A integração com a API da Anthropic (Claude) segue boas práticas de resiliência:
+
+```python
+# Exemplo conceitual de configuração (ver implementação real em app/infrastructure/external/)
+# - SDK oficial anthropic para chamadas
+# - tenacity para retry com backoff exponencial
+# - Circuit breaker para falhas consecutivas
+# - httpx como cliente HTTP assíncrono subjacente
+# - Rate limiting respeitando limites da API Anthropic
 ```
 
-O instalador será gerado em `src-tauri/target/release/bundle/`.
+### Funcionalidades de IA
 
-### Executar apenas o Frontend (isolado)
+1. **Análise de documentos**: envio de texto extraído para análise estruturada
+2. **Chat contextual**: conversação com contexto de documentos carregados
+3. **Busca semântica**: embeddings para busca por similaridade (FAISS/Milvus — decisão pendente, ver ADR G002)
+4. **Sumarização**: resumos automáticos de peças processuais
+
+---
+
+## Testes
+
+### Backend
+
+```bash
+cd backend
+
+# Executar todos os testes
+pytest
+
+# Testes com cobertura
+pytest --cov=app --cov-report=html
+
+# Apenas testes unitários
+pytest tests/unit/
+
+# Apenas testes de integração
+pytest tests/integration/
+
+# Testes com output detalhado
+pytest -v --tb=short
+```
+
+### Frontend
 
 ```bash
 cd frontend
-npm run dev
+
+# Executar testes
+npm run test
+
+# Testes com cobertura
+npm run test:coverage
+
+# Testes em modo watch
+npm run test:watch
 ```
 
-### Executar apenas o Sidecar Python (para testes)
+### Convenções de Teste
+
+- **Unitários**: testam use cases e lógica de domínio isoladamente (mocks para ports)
+- **Integração**: testam fluxos completos com banco de dados de teste
+- **Cobertura mínima**: 80% para merge em branches protegidas
+- **Nomenclatura**: `test_<funcionalidade>_<cenario>_<resultado_esperado>`
+
+---
+
+## Migrações de Banco de Dados
 
 ```bash
-cd sidecar-python
-source .venv/bin/activate
-python -m src.main
+cd backend
+
+# Criar nova migração
+alembic revision --autogenerate -m "descricao_da_migracao"
+
+# Aplicar migrações pendentes
+alembic upgrade head
+
+# Reverter última migração
+alembic downgrade -1
+
+# Ver histórico de migrações
+alembic history
+
+# Ver migração atual
+alembic current
 ```
+
+### Boas Práticas para Migrações
+
+- Sempre revisar migrações auto-geradas antes de aplicar
+- Migrações devem ser idempotentes quando possível
+- Nunca editar migrações já aplicadas em ambientes compartilhados
+- Incluir migração de rollback (downgrade) funcional
 
 ---
 
-## Banco de Dados
+## Deploy
 
-### SQLite + SQLCipher
+### Ambientes
 
-O banco de dados é criado automaticamente no primeiro uso, criptografado com SQLCipher.
-
-- **Localização**: `{app_data_dir}/automacao-juridica.db` (diretório de dados do Tauri)
-- **Criptografia**: AES-256-CBC com PBKDF2 (100.000 iterações)
-- **Chave**: Derivada da senha mestra do usuário via Argon2
-
-### Migrations
-
-As migrations ficam em `src-tauri/migrations/` e são executadas automaticamente na inicialização:
-
-```
-src-tauri/migrations/
-└── 001_initial_schema.sql    # Schema inicial: usuários, processos, documentos, auditoria
-```
-
-### Busca Full-Text
-
-A extensão FTS5 é habilitada para busca textual em documentos jurídicos, permitindo consultas como:
-
-```sql
-SELECT * FROM documentos_fts WHERE documentos_fts MATCH 'habeas corpus';
-```
-
----
-
-## Sidecar Python
-
-O sidecar Python é um processo separado gerenciado pelo Tauri core (Rust). A comunicação ocorre via **stdin/stdout** com mensagens JSON delimitadas por newline (JSON Lines).
-
-### Módulos
-
-| Módulo | Responsabilidade |
-|---|---|
-| `src/main.py` | Entry point, loop de mensagens, roteamento de comandos |
-| `src/datajud/` | Cliente DataJud API (CNJ) com paginação, retry e auditoria |
-| `src/ia/` | Serviço LLM local + motor de pseudonimização |
-| `src/templates/` | Engine Jinja2 para geração de peças jurídicas |
-
-### Protocolo de Comunicação
-
-```json
-// Rust → Python (request)
-{"id": "uuid", "method": "ia.chat", "params": {"prompt": "..."}}
-
-// Python → Rust (response)
-{"id": "uuid", "result": {"text": "..."}, "error": null}
-
-// Python → Rust (streaming)
-{"id": "uuid", "stream": true, "chunk": "token..."}
-{"id": "uuid", "stream": true, "done": true}
-```
-
----
-
-## IA Local
-
-### Pipeline de Processamento
-
-Todo texto enviado à IA passa obrigatoriamente pelo pipeline de pseudonimização:
-
-```
-Texto Original → Pseudonimização (remoção PII) → LLM Local → Re-identificação → Resposta
-```
-
-1. **Pseudonimização**: Nomes, CPFs, OABs, endereços e outros dados pessoais são substituídos por placeholders (`[PESSOA_1]`, `[CPF_1]`, etc.)
-2. **Inferência Local**: O texto pseudonimizado é processado pelo LLM (Ollama/llama.cpp)
-3. **Re-identificação**: Os placeholders na resposta são substituídos de volta pelos dados originais
-
-### Modelos Recomendados
-
-| Modelo | VRAM | Uso |
+| Ambiente | Propósito | Branch |
 |---|---|---|
-| `llama3.1:8b` | ~6 GB | Uso geral, análise de documentos |
-| `llama3.1:70b` | ~40 GB | Análise complexa (requer GPU dedicada) |
-| `sabia-2` | ~6 GB | Modelo otimizado para português (quando disponível) |
+| development | Desenvolvimento local | feature/* |
+| staging | Testes de integração e QA | develop |
+| production | Produção | main |
 
-> **Nota**: A aplicação funciona sem IA — as funcionalidades de IA são opcionais e degradam graciosamente.
-
----
-
-## Decisões Arquiteturais
-
-### ADR-001: Desktop Local-First (Tauri) em vez de Web SPA
-
-**Contexto**: Dados jurídicos são sigilosos (art. 7º do Estatuto da OAB) e não devem trafegar por servidores externos.
-
-**Decisão**: Aplicação desktop com Tauri, processamento 100% local.
-
-**Consequências**: (+) Sigilo garantido, operação offline, sem custos de servidor. (-) Distribuição mais complexa, atualizações manuais.
-
-### ADR-002: SQLite+SQLCipher em vez de PostgreSQL
-
-**Contexto**: Banco local, sem necessidade de acesso concorrente multi-usuário.
-
-**Decisão**: SQLite com SQLCipher para criptografia em repouso.
-
-**Consequências**: (+) Zero configuração, portável, criptografado. (-) Sem acesso remoto, limitações de concorrência.
-
-### ADR-003: IA Local (llama.cpp/Ollama) em vez de APIs Cloud
-
-**Contexto**: Dados de clientes não podem ser enviados para APIs externas sem consentimento explícito.
-
-**Decisão**: Inferência LLM local com pseudonimização obrigatória como camada adicional de proteção.
-
-**Consequências**: (+) Privacidade total, sem custos de API, offline. (-) Requer hardware adequado, modelos menores que GPT-4.
-
-### ADR-004: Sidecar Python em vez de Rust puro
-
-**Contexto**: Ecossistema Python é superior para IA/ML, templates e integração com APIs REST.
-
-**Decisão**: Processo Python separado (sidecar) gerenciado pelo Tauri, comunicação via JSON Lines.
-
-**Consequências**: (+) Acesso ao ecossistema Python, isolamento de falhas. (-) Overhead de IPC, necessidade de distribuir Python.
-
-### ADR-005: Clean Architecture com Monólito Modular
-
-**Contexto**: Projeto precisa de manutenibilidade a longo prazo com regras de negócio complexas.
-
-**Decisão**: Separação rigorosa em camadas (domain, commands, infra) sem dependências circulares.
-
-**Consequências**: (+) Testabilidade, substituibilidade de componentes. (-) Mais boilerplate inicial.
-
----
-
-## Segurança e Sigilo
-
-### Níveis de Sigilo
-
-O sistema implementa **5 níveis de sigilo** para documentos e processos:
-
-| Nível | Descrição | Acesso |
-|---|---|---|
-| 1 - Público | Informações de domínio público | Todos os usuários |
-| 2 - Interno | Uso interno do escritório | Usuários autenticados |
-| 3 - Confidencial | Dados de clientes | Equipe do caso |
-| 4 - Restrito | Dados sensíveis (saúde, criminal) | Advogado responsável + sócios |
-| 5 - Ultra-secreto | Segredo de justiça | Apenas advogado responsável |
-
-### Medidas de Segurança
-
-- **Criptografia em repouso**: SQLCipher (AES-256-CBC) com PBKDF2 100k iterações
-- **Pseudonimização obrigatória**: Todo texto é pseudonimizado antes de processamento por IA
-- **RBAC/ABAC**: Controle de acesso baseado em papéis e atributos
-- **Auditoria completa**: Todas as operações sensíveis são logadas com timestamp, usuário e detalhes
-- **Sem telemetria**: Nenhum dado é enviado para servidores externos
-- **Chave derivada**: A chave do banco é derivada da senha do usuário (nunca armazenada em texto plano)
-
----
-
-## Variáveis de Ambiente
-
-Veja `.env.example` para a lista completa. Principais variáveis:
-
-| Variável | Descrição | Padrão |
-|---|---|---|
-| `OLLAMA_BASE_URL` | URL do servidor Ollama local | `http://localhost:11434` |
-| `OLLAMA_MODEL` | Modelo LLM padrão | `llama3.1:8b` |
-| `DATAJUD_API_KEY` | Chave de API do DataJud (CNJ) | — |
-| `DATAJUD_BASE_URL` | URL base da API DataJud | `https://datajud-wiki.cnj.jus.br/api` |
-| `LOG_LEVEL` | Nível de log (DEBUG, INFO, WARN, ERROR) | `INFO` |
-| `SQLCIPHER_KDF_ITERATIONS` | Iterações PBKDF2 para SQLCipher | `100000` |
-| `SIDECAR_PYTHON_PATH` | Caminho para o executável Python do sidecar | Auto-detectado |
-
----
-
-## Scripts Úteis
-
-### Desenvolvimento
+### Deploy com Docker
 
 ```bash
-# Executar app em modo dev
-cargo tauri dev
+# Build das imagens
+docker compose -f docker-compose.prod.yml build
 
-# Apenas frontend (sem Tauri)
-cd frontend && npm run dev
-
-# Verificar tipos TypeScript
-cd frontend && npm run typecheck
-
-# Lint frontend
-cd frontend && npm run lint
-
-# Verificar Rust
-cd src-tauri && cargo clippy -- -D warnings
-
-# Formatar Rust
-cd src-tauri && cargo fmt
-
-# Testes Rust
-cd src-tauri && cargo test
-
-# Testes Python
-cd sidecar-python && python -m pytest
-
-# Lint Python
-cd sidecar-python && ruff check src/
+# Deploy
+docker compose -f docker-compose.prod.yml up -d
 ```
 
-### Build
+### Checklist de Deploy para Produção
 
-```bash
-# Build de produção (gera instalador)
-cargo tauri build
-
-# Build sidecar Python (executável standalone)
-# TODO: Configurar PyInstaller ou Nuitka para bundling do sidecar
-cd sidecar-python && python -m PyInstaller src/main.py --onefile --name sidecar
-```
+- [ ] Variáveis de ambiente configuradas (sem valores padrão inseguros)
+- [ ] `APP_DEBUG=false`
+- [ ] JWT_SECRET_KEY com chave RS256 gerada adequadamente
+- [ ] CORS_ORIGINS restrito ao domínio de produção
+- [ ] TLS/HTTPS configurado no Nginx
+- [ ] Migrações de banco aplicadas
+- [ ] Backup de banco de dados configurado
+- [ ] Monitoramento e alertas ativos
+- [ ] Rate limiting ajustado para produção
+- [ ] Logs estruturados direcionados para agregador (ex: ELK, Datadog)
 
 ---
 
 ## Contribuição
 
-### Convenções
-
-- **Commits**: [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, etc.)
-- **Branches**: `feature/<nome>`, `fix/<nome>`, `docs/<nome>`
-- **Rust**: `cargo fmt` + `cargo clippy` sem warnings
-- **Python**: Ruff + type hints obrigatórios + docstrings (Google style)
-- **TypeScript**: ESLint + Prettier + strict mode
-
 ### Fluxo de Trabalho
 
-1. Criar branch a partir de `main`
-2. Implementar com testes
-3. Garantir que `cargo clippy`, `npm run lint` e `ruff check` passam
-4. Abrir Pull Request com descrição detalhada
-5. Code review obrigatório
+1. Crie uma branch a partir de `develop`:
+   ```bash
+   git checkout develop
+   git pull origin develop
+   git checkout -b feature/minha-funcionalidade
+   ```
+
+2. Implemente a funcionalidade seguindo as convenções do projeto
+
+3. Escreva testes para a funcionalidade
+
+4. Certifique-se de que todos os testes passam:
+   ```bash
+   # Backend
+   cd backend && pytest
+   
+   # Frontend
+   cd frontend && npm run test
+   ```
+
+5. Execute os linters:
+   ```bash
+   # Backend
+   ruff check .
+   ruff format --check .
+   mypy app/
+   
+   # Frontend
+   npm run lint
+   npm run type-check
+   ```
+
+6. Faça commit seguindo [Conventional Commits](https://www.conventionalcommits.org/):
+   ```bash
+   git commit -m "feat(documents): adicionar upload de documentos com validação"
+   git commit -m "fix(auth): corrigir expiração de refresh token"
+   git commit -m "docs(readme): atualizar instruções de setup"
+   ```
+
+7. Abra um Pull Request para `develop`
+
+### Convenções de Código
+
+#### Python (Backend)
+- **Formatter**: ruff format
+- **Linter**: ruff
+- **Type checker**: mypy
+- **Docstrings**: obrigatórias em módulos, classes e funções públicas (PT-BR)
+- **Estilo**: PEP 8, com line length de 100 caracteres
+
+#### TypeScript (Frontend)
+- **Formatter**: Prettier
+- **Linter**: ESLint com config recomendada para React + TypeScript
+- **JSDoc**: obrigatório em exports públicos (PT-BR)
+- **Estilo**: Airbnb-like com adaptações para TypeScript
+
+#### Idioma
+- **Código** (variáveis, funções, classes): inglês
+- **Documentação** (docstrings, comentários, mensagens): português brasileiro (PT-BR)
+- **Termos técnicos** (JWT, middleware, async, etc.): mantidos em inglês
+- **Mensagens de erro para o usuário**: português brasileiro
+- **Commits**: português brasileiro com prefixo Conventional Commits em inglês
+
+### Architecture Decision Records (ADRs)
+
+Decisões arquiteturais significativas são documentadas em `docs/adr/`. ADRs pendentes:
+
+- **G002**: Escolha entre FAISS e Milvus para índice vetorial de busca semântica
+- **G005**: Definição de design tokens (cores, tipografia, breakpoints)
 
 ---
 
 ## Licença
 
-<!-- TODO: Definir licença do projeto (proprietária ou open-source) -->
+<!-- TODO: Definir licença do projeto. Sugestões: MIT para open source ou licença proprietária para uso comercial. Consultar equipe jurídica. -->
 
-Este projeto é software proprietário. Todos os direitos reservados.
-
----
-
-## Roadmap
-
-- [ ] **v0.1** — Scaffold inicial, CRUD de processos, banco SQLCipher
-- [ ] **v0.2** — Integração DataJud, consulta processual
-- [ ] **v0.3** — Chat IA local com pseudonimização
-- [ ] **v0.4** — Geração de peças jurídicas via templates
-- [ ] **v0.5** — Dashboard de métricas e prazos
-- [ ] **v1.0** — Release estável com instalador multiplataforma
+Este projeto é de uso restrito. Consulte a equipe responsável para informações sobre licenciamento.
 
 ---
 
-> **Aviso Legal**: Este software é uma ferramenta de auxílio. Todas as peças jurídicas e análises geradas por IA devem ser revisadas por um advogado habilitado antes do uso.
+## Contato
+
+<!-- TODO: Adicionar informações de contato da equipe responsável pelo projeto. -->
+
+Para dúvidas, sugestões ou reportar problemas, entre em contato com a equipe de desenvolvimento.
+
+---
+
+> **Nota**: Este projeto está em desenvolvimento ativo. Consulte os ADRs em `docs/adr/` para decisões arquiteturais pendentes e o board de issues para funcionalidades planejadas.
