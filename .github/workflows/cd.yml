@@ -1,0 +1,506 @@
+# Pipeline de Entrega Contínua — Automação Jurídica Assistida
+# Build de imagens Docker, push para registry e deploy em staging/produção
+#
+# Fluxo:
+#   1. Build e push de imagens Docker (backend + frontend)
+#   2. Deploy automático em staging (branch develop)
+#   3. Deploy em produção com aprovação manual (branch main)
+
+name: CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Ambiente alvo para deploy manual"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+  # Registry — ajustar conforme provedor (GHCR, ECR, ACR, etc.)
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/automacao-juridica-assistida
+  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/automacao-juridica-assistida/backend
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/automacao-juridica-assistida/frontend
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false  # Não cancelar deploys em andamento
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  # ============================================================
+  # Etapa 1 — Determinar ambiente e versão
+  # ============================================================
+  prepare:
+    name: "Preparar metadados de deploy"
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+      version: ${{ steps.set-version.outputs.version }}
+      short_sha: ${{ steps.set-version.outputs.short_sha }}
+      should_deploy: ${{ steps.set-env.outputs.should_deploy }}
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determinar ambiente alvo
+        id: set-env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "environment=none" >> $GITHUB_OUTPUT
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Gerar versão semântica
+        id: set-version
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          # Formato: YYYY.MM.DD-<short_sha> para rastreabilidade
+          VERSION=$(date +'%Y.%m.%d')-${SHORT_SHA}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "Versão gerada: ${VERSION}"
+
+  # ============================================================
+  # Etapa 2 — Executar CI antes do deploy (reutiliza pipeline CI)
+  # ============================================================
+  ci-check:
+    name: "Verificação CI pré-deploy"
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  # ============================================================
+  # Etapa 3 — Build e Push da imagem Docker do Backend
+  # ============================================================
+  build-backend:
+    name: "Build Backend Docker Image"
+    runs-on: ubuntu-latest
+    needs: [prepare, ci-check]
+    if: needs.prepare.outputs.should_deploy == 'true'
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build-push.outputs.digest }}
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login no Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extrair metadados Docker (backend)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.BACKEND_IMAGE }}
+          tags: |
+            type=raw,value=${{ needs.prepare.outputs.version }}
+            type=raw,value=${{ needs.prepare.outputs.environment }}-latest
+            type=sha,prefix=sha-
+
+      - name: Build e push da imagem backend
+        id: build-push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+            APP_VERSION=${{ needs.prepare.outputs.version }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ needs.prepare.outputs.short_sha }}
+          # Segurança: não incluir secrets no build
+          # Usar multi-stage build no Dockerfile para imagem mínima
+
+      - name: Verificar vulnerabilidades na imagem (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.BACKEND_IMAGE }}:${{ needs.prepare.outputs.version }}
+          format: "sarif"
+          output: "trivy-backend-results.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"  # Falhar em vulnerabilidades críticas
+        continue-on-error: false
+
+      - name: Upload resultado Trivy (backend)
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-backend-results.sarif"
+
+  # ============================================================
+  # Etapa 4 — Build e Push da imagem Docker do Frontend
+  # ============================================================
+  build-frontend:
+    name: "Build Frontend Docker Image"
+    runs-on: ubuntu-latest
+    needs: [prepare, ci-check]
+    if: needs.prepare.outputs.should_deploy == 'true'
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build-push.outputs.digest }}
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login no Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extrair metadados Docker (frontend)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.FRONTEND_IMAGE }}
+          tags: |
+            type=raw,value=${{ needs.prepare.outputs.version }}
+            type=raw,value=${{ needs.prepare.outputs.environment }}-latest
+            type=sha,prefix=sha-
+
+      - name: Build e push da imagem frontend
+        id: build-push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            APP_VERSION=${{ needs.prepare.outputs.version }}
+            VITE_API_BASE_URL=${{ needs.prepare.outputs.environment == 'production' && vars.PROD_API_URL || vars.STAGING_API_URL }}
+            VITE_APP_ENV=${{ needs.prepare.outputs.environment }}
+
+      - name: Verificar vulnerabilidades na imagem (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.FRONTEND_IMAGE }}:${{ needs.prepare.outputs.version }}
+          format: "sarif"
+          output: "trivy-frontend-results.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+        continue-on-error: false
+
+      - name: Upload resultado Trivy (frontend)
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-frontend-results.sarif"
+
+  # ============================================================
+  # Etapa 5 — Deploy em Staging (automático para branch develop)
+  # ============================================================
+  deploy-staging:
+    name: "Deploy Staging"
+    runs-on: ubuntu-latest
+    needs: [prepare, build-backend, build-frontend]
+    if: needs.prepare.outputs.environment == 'staging'
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_URL }}
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Registrar início do deploy
+        run: |
+          echo "========================================"
+          echo "Deploy para STAGING"
+          echo "Versão: ${{ needs.prepare.outputs.version }}"
+          echo "Backend: ${{ env.BACKEND_IMAGE }}:${{ needs.prepare.outputs.version }}"
+          echo "Frontend: ${{ env.FRONTEND_IMAGE }}:${{ needs.prepare.outputs.version }}"
+          echo "========================================"
+
+      # TODO: Configurar método de deploy conforme infraestrutura escolhida.
+      #       Opções comuns:
+      #       - Docker Compose via SSH (VPS/VM)
+      #       - Kubernetes (kubectl apply / Helm upgrade)
+      #       - AWS ECS (task definition update)
+      #       - Azure Container Apps
+      #       Descomente e ajuste o bloco adequado abaixo.
+
+      # --- Opção A: Deploy via SSH + Docker Compose ---
+      # - name: Deploy via SSH
+      #   uses: appleboy/ssh-action@v1
+      #   with:
+      #     host: ${{ secrets.STAGING_SSH_HOST }}
+      #     username: ${{ secrets.STAGING_SSH_USER }}
+      #     key: ${{ secrets.STAGING_SSH_KEY }}
+      #     port: ${{ secrets.STAGING_SSH_PORT || 22 }}
+      #     script: |
+      #       cd /opt/automacao-juridica
+      #       export BACKEND_IMAGE=${{ env.BACKEND_IMAGE }}:${{ needs.prepare.outputs.version }}
+      #       export FRONTEND_IMAGE=${{ env.FRONTEND_IMAGE }}:${{ needs.prepare.outputs.version }}
+      #       docker compose pull
+      #       docker compose up -d --remove-orphans
+      #       docker compose exec backend alembic upgrade head
+      #       echo "Deploy staging concluído — versão ${{ needs.prepare.outputs.version }}"
+
+      # --- Opção B: Deploy via Kubernetes ---
+      # - name: Configurar kubectl
+      #   uses: azure/setup-kubectl@v3
+      # - name: Configurar kubeconfig
+      #   run: echo "${{ secrets.STAGING_KUBECONFIG }}" > $HOME/.kube/config
+      # - name: Atualizar imagens no cluster
+      #   run: |
+      #     kubectl set image deployment/backend backend=${{ env.BACKEND_IMAGE }}:${{ needs.prepare.outputs.version }} -n staging
+      #     kubectl set image deployment/frontend frontend=${{ env.FRONTEND_IMAGE }}:${{ needs.prepare.outputs.version }} -n staging
+      #     kubectl rollout status deployment/backend -n staging --timeout=300s
+      #     kubectl rollout status deployment/frontend -n staging --timeout=300s
+
+      - name: Placeholder — deploy staging
+        run: |
+          echo "TODO: Implementar deploy para staging conforme infraestrutura definida."
+          echo "Imagens disponíveis no registry para deploy manual se necessário."
+
+      - name: Executar migrações de banco de dados (staging)
+        run: |
+          # TODO: Executar Alembic migrations no ambiente staging
+          # Exemplo via SSH ou kubectl exec:
+          # docker compose exec backend alembic upgrade head
+          echo "TODO: Executar 'alembic upgrade head' no ambiente staging"
+
+      - name: Smoke test — verificar saúde da aplicação
+        run: |
+          # TODO: Ajustar URL conforme ambiente
+          HEALTH_URL="${{ vars.STAGING_URL }}/api/v1/health"
+          echo "Verificando saúde da aplicação em: ${HEALTH_URL}"
+          # Aguardar até 120 segundos pela aplicação ficar saudável
+          # for i in $(seq 1 12); do
+          #   STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${HEALTH_URL}" || true)
+          #   if [ "$STATUS" = "200" ]; then
+          #     echo "Aplicação saudável (HTTP 200)"
+          #     exit 0
+          #   fi
+          #   echo "Tentativa ${i}/12 — status: ${STATUS}. Aguardando 10s..."
+          #   sleep 10
+          # done
+          # echo "ERRO: Aplicação não respondeu em 120 segundos"
+          # exit 1
+          echo "TODO: Habilitar smoke test quando URL de staging estiver configurada"
+
+      - name: Notificar equipe sobre deploy staging
+        if: always()
+        run: |
+          # TODO: Integrar com Slack, Teams ou outro canal de notificação
+          # Exemplo com Slack:
+          # curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+          #   -H 'Content-type: application/json' \
+          #   -d '{"text": "Deploy staging concluído — versão ${{ needs.prepare.outputs.version }} — status: ${{ job.status }}"}'
+          echo "Deploy staging finalizado com status: ${{ job.status }}"
+
+  # ============================================================
+  # Etapa 6 — Deploy em Produção (com aprovação manual)
+  # ============================================================
+  deploy-production:
+    name: "Deploy Produção"
+    runs-on: ubuntu-latest
+    needs: [prepare, build-backend, build-frontend]
+    if: needs.prepare.outputs.environment == 'production'
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+      # IMPORTANTE: Configurar "Required reviewers" no GitHub Environment
+      # para exigir aprovação manual antes do deploy em produção
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Registrar início do deploy em produção
+        run: |
+          echo "========================================"
+          echo "⚠️  DEPLOY PARA PRODUÇÃO"
+          echo "Versão: ${{ needs.prepare.outputs.version }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Autor: ${{ github.actor }}"
+          echo "Backend: ${{ env.BACKEND_IMAGE }}:${{ needs.prepare.outputs.version }}"
+          echo "Frontend: ${{ env.FRONTEND_IMAGE }}:${{ needs.prepare.outputs.version }}"
+          echo "========================================"
+
+      # TODO: Criar backup do banco de dados antes do deploy
+      - name: Backup do banco de dados (pré-deploy)
+        run: |
+          # TODO: Implementar backup automático do PostgreSQL
+          # Exemplo:
+          # ssh $PROD_HOST "pg_dump -Fc automacao_juridica > /backups/pre-deploy-${{ needs.prepare.outputs.version }}.dump"
+          echo "TODO: Implementar backup pré-deploy do banco de dados"
+
+      # TODO: Configurar método de deploy conforme infraestrutura escolhida
+      # Mesmas opções do staging, porém com secrets/vars de produção
+
+      # --- Opção A: Deploy via SSH + Docker Compose ---
+      # - name: Deploy via SSH (produção)
+      #   uses: appleboy/ssh-action@v1
+      #   with:
+      #     host: ${{ secrets.PROD_SSH_HOST }}
+      #     username: ${{ secrets.PROD_SSH_USER }}
+      #     key: ${{ secrets.PROD_SSH_KEY }}
+      #     port: ${{ secrets.PROD_SSH_PORT || 22 }}
+      #     script: |
+      #       cd /opt/automacao-juridica
+      #       export BACKEND_IMAGE=${{ env.BACKEND_IMAGE }}:${{ needs.prepare.outputs.version }}
+      #       export FRONTEND_IMAGE=${{ env.FRONTEND_IMAGE }}:${{ needs.prepare.outputs.version }}
+      #       docker compose pull
+      #       docker compose up -d --remove-orphans
+      #       docker compose exec backend alembic upgrade head
+      #       echo "Deploy produção concluído — versão ${{ needs.prepare.outputs.version }}"
+
+      - name: Placeholder — deploy produção
+        run: |
+          echo "TODO: Implementar deploy para produção conforme infraestrutura definida."
+          echo "Imagens disponíveis no registry para deploy manual se necessário."
+
+      - name: Executar migrações de banco de dados (produção)
+        run: |
+          # TODO: Executar Alembic migrations no ambiente de produção
+          # ATENÇÃO: Garantir que migrações são backward-compatible
+          echo "TODO: Executar 'alembic upgrade head' no ambiente de produção"
+
+      - name: Smoke test — verificar saúde da aplicação (produção)
+        run: |
+          HEALTH_URL="${{ vars.PRODUCTION_URL }}/api/v1/health"
+          echo "Verificando saúde da aplicação em produção: ${HEALTH_URL}"
+          # for i in $(seq 1 18); do
+          #   STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${HEALTH_URL}" || true)
+          #   if [ "$STATUS" = "200" ]; then
+          #     echo "Aplicação saudável em produção (HTTP 200)"
+          #     exit 0
+          #   fi
+          #   echo "Tentativa ${i}/18 — status: ${STATUS}. Aguardando 10s..."
+          #   sleep 10
+          # done
+          # echo "ERRO CRÍTICO: Aplicação de produção não respondeu em 180 segundos"
+          # exit 1
+          echo "TODO: Habilitar smoke test quando URL de produção estiver configurada"
+
+      - name: Notificar equipe sobre deploy em produção
+        if: always()
+        run: |
+          # TODO: Integrar com Slack, Teams ou outro canal de notificação
+          # Em produção, notificações são obrigatórias para auditoria
+          echo "Deploy produção finalizado com status: ${{ job.status }}"
+          echo "Versão: ${{ needs.prepare.outputs.version }}"
+
+  # ============================================================
+  # Etapa 7 — Rollback automático em caso de falha (produção)
+  # ============================================================
+  rollback-production:
+    name: "Rollback Produção (em caso de falha)"
+    runs-on: ubuntu-latest
+    needs: [prepare, deploy-production]
+    if: failure() && needs.prepare.outputs.environment == 'production'
+    environment:
+      name: production
+    steps:
+      - name: Executar rollback
+        run: |
+          echo "========================================"
+          echo "⚠️  ROLLBACK DE PRODUÇÃO INICIADO"
+          echo "Deploy falhou para versão: ${{ needs.prepare.outputs.version }}"
+          echo "========================================"
+          # TODO: Implementar rollback automático
+          # Opções:
+          # 1. Re-deploy da imagem anterior (tag: production-latest anterior)
+          # 2. kubectl rollout undo deployment/backend -n production
+          # 3. Restaurar backup do banco se migração falhou
+          echo "TODO: Implementar estratégia de rollback conforme infraestrutura"
+
+      - name: Notificar equipe sobre rollback
+        if: always()
+        run: |
+          # TODO: Notificação urgente para equipe
+          echo "ALERTA: Rollback de produção executado. Verificação manual necessária."
+
+  # ============================================================
+  # Etapa 8 — Criar release tag no repositório
+  # ============================================================
+  create-release:
+    name: "Criar Release Tag"
+    runs-on: ubuntu-latest
+    needs: [prepare, deploy-production]
+    if: success() && needs.prepare.outputs.environment == 'production'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Criar tag de release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TAG="v${{ needs.prepare.outputs.version }}"
+          git tag -a "${TAG}" -m "Release ${TAG} — deploy automático em produção"
+          git push origin "${TAG}"
+          echo "Tag criada: ${TAG}"
+
+      - name: Criar GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.prepare.outputs.version }}
+          name: "Release v${{ needs.prepare.outputs.version }}"
+          body: |
+            ## Automação Jurídica Assistida — Release v${{ needs.prepare.outputs.version }}
+
+            **Deploy automático em produção**
+
+            - Commit: ${{ github.sha }}
+            - Autor: ${{ github.actor }}
+            - Data: ${{ github.event.head_commit.timestamp }}
+
+            ### Imagens Docker
+            - Backend: `${{ env.BACKEND_IMAGE }}:${{ needs.prepare.outputs.version }}`
+            - Frontend: `${{ env.FRONTEND_IMAGE }}:${{ needs.prepare.outputs.version }}`
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
