@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Título da aplicação -->
+    <title>Automação Jurídica Assistida</title>
+
+    <!-- Descrição para SEO e acessibilidade -->
+    <meta
+      name="description"
+      content="Plataforma de automação jurídica assistida por inteligência artificial. Análise de documentos, consulta ao DataJud e assistente jurídico inteligente."
+    />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="alternate icon" href="/favicon.ico" />
+
+    <!-- Preconnect para otimização de carregamento -->
+    <link rel="preconnect" href="/api" />
+
+    <!--
+      Content Security Policy (CSP) — Headers de segurança via meta tag.
+      Em produção, recomenda-se configurar CSP via Nginx (header HTTP) para maior controle.
+      A meta tag abaixo serve como fallback e proteção em ambientes de desenvolvimento.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        script-src 'self';
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' data: blob:;
+        font-src 'self';
+        connect-src 'self' /api;
+        frame-ancestors 'none';
+        base-uri 'self';
+        form-action 'self';
+        object-src 'none';
+        upgrade-insecure-requests;
+      "
+    />
+
+    <!-- Proteção contra clickjacking -->
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta http-equiv="X-Frame-Options" content="DENY" />
+
+    <!-- Referrer Policy para privacidade -->
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+
+    <!-- Tema de cor para navegadores mobile -->
+    <meta name="theme-color" content="#1e3a5f" />
+
+    <!-- Manifesto PWA (futuro) -->
+    <!-- <link rel="manifest" href="/manifest.json" /> -->
+  </head>
+
+  <body>
+    <!--
+      Mensagem de fallback exibida caso o JavaScript esteja desabilitado.
+      Garante acessibilidade mínima e orientação ao usuário.
+    -->
+    <noscript>
+      <div
+        style="
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          min-height: 100vh;
+          font-family: system-ui, -apple-system, sans-serif;
+          background-color: #f8f9fa;
+          color: #1e3a5f;
+          padding: 2rem;
+          text-align: center;
+        "
+      >
+        <div>
+          <h1>Automação Jurídica Assistida</h1>
+          <p>
+            Esta aplicação requer JavaScript habilitado para funcionar
+            corretamente. Por favor, habilite o JavaScript no seu navegador e
+            recarregue a página.
+          </p>
+        </div>
+      </div>
+    </noscript>
+
+    <!--
+      Elemento raiz da aplicação React.
+      O React SPA será montado neste container via ReactDOM.createRoot().
+    -->
+    <div id="root"></div>
+
+    <!--
+      Entry-point do módulo TypeScript.
+      Vite processa este script como ES Module, habilitando HMR em desenvolvimento
+      e tree-shaking/code-splitting em produção.
+    -->
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
