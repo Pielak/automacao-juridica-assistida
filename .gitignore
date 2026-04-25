@@ -1,142 +1,215 @@
-# ============================================================================
-# Automação Jurídica Assistida — .gitignore
-# Ignora artefatos de build Rust/Node/Python, SQLite, modelos LLM, .env
-# ============================================================================
+# =============================================================================
+# .gitignore — Automação Jurídica Assistida
+# Regras de exclusão para Python, Node.js, IDEs, variáveis de ambiente e builds
+# =============================================================================
 
-# ────────────────────────────────────────────────────────────────────────────
-# Ambiente e segredos
-# ────────────────────────────────────────────────────────────────────────────
-.env
-.env.local
-.env.*.local
-!.env.example
-
-# ────────────────────────────────────────────────────────────────────────────
-# Rust / Tauri (src-tauri)
-# ────────────────────────────────────────────────────────────────────────────
-src-tauri/target/
-src-tauri/Cargo.lock
-src-tauri/WixTools/
-src-tauri/gen/
-
-# Tauri build bundles (installers, dmg, msi, deb, AppImage, etc.)
-src-tauri/target/release/bundle/
-
-# ────────────────────────────────────────────────────────────────────────────
-# Node / Frontend
-# ────────────────────────────────────────────────────────────────────────────
-node_modules/
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
-frontend/.tsbuildinfo
-*.tsbuildinfo
-
-# ────────────────────────────────────────────────────────────────────────────
-# Python / Sidecar
-# ────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
-*.pyo
-*.pyd
-.Python
-sidecar-python/.venv/
-sidecar-python/venv/
-sidecar-python/env/
-sidecar-python/.env/
-sidecar-python/dist/
-sidecar-python/build/
-sidecar-python/*.egg-info/
-sidecar-python/.eggs/
-sidecar-python/.mypy_cache/
-sidecar-python/.ruff_cache/
-sidecar-python/.pytest_cache/
-sidecar-python/htmlcov/
-sidecar-python/.coverage
-sidecar-python/coverage.xml
+*.so
 
-# Virtualenvs genéricos
-.venv/
+# Distribuição / Empacotamento
+dist/
+build/
+*.egg-info/
+*.egg
+*.whl
+sdist/
+wheels/
+pip-wheel-metadata/
+
+# Ambientes virtuais
 venv/
 env/
+.venv/
+.env.local
+.env.development
+.env.staging
+.env.production
 
-# ────────────────────────────────────────────────────────────────────────────
-# SQLite / SQLCipher — bancos de dados locais
-# ────────────────────────────────────────────────────────────────────────────
-*.db
-*.db-shm
-*.db-wal
-*.sqlite
-*.sqlite3
-*.sqlcipher
-data/
+# Instaladores
+*.manifest
+*.spec
 
-# ────────────────────────────────────────────────────────────────────────────
-# Modelos LLM locais (llama.cpp / Ollama)
-# Podem ter vários GB — nunca versionar
-# ────────────────────────────────────────────────────────────────────────────
-models/
-*.gguf
-*.ggml
-*.bin
-!sidecar-python/src/**/*.bin
-*.safetensors
+# Pytest / Cobertura
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
 
-# Ollama local cache
-.ollama/
+# MyPy
+.mypy_cache/
+dmypy.json
+dmypy.txt
 
-# ────────────────────────────────────────────────────────────────────────────
-# Logs e auditoria local
-# ────────────────────────────────────────────────────────────────────────────
-logs/
+# Ruff / Linters
+.ruff_cache/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Alembic (arquivos temporários, não as migrações em si)
+# As migrações em versions/ devem ser versionadas
+
+# Logs
 *.log
-*.log.*
+logs/
 
-# ────────────────────────────────────────────────────────────────────────────
-# IDEs e editores
-# ────────────────────────────────────────────────────────────────────────────
-.vscode/
-!.vscode/settings.json
-!.vscode/extensions.json
-.idea/
-*.iml
-*.swp
-*.swo
-*~
-.DS_Store
-Thumbs.db
-Desktop.ini
+# -----------------------------------------------------------------------------
+# Node.js / Frontend (React + Vite)
+# -----------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
 
-# ────────────────────────────────────────────────────────────────────────────
-# Arquivos temporários e caches diversos
-# ────────────────────────────────────────────────────────────────────────────
-tmp/
-temp/
-*.tmp
-*.bak
-*.orig
+# Builds do Vite
+frontend/dist/
+frontend/build/
 
-# ────────────────────────────────────────────────────────────────────────────
-# Documentos gerados (peças jurídicas renderizadas)
-# ────────────────────────────────────────────────────────────────────────────
-output/
-generated/
+# Cache do Vite e TypeScript
+*.tsbuildinfo
+.vite/
 
-# ────────────────────────────────────────────────────────────────────────────
-# Cobertura e testes
-# ────────────────────────────────────────────────────────────────────────────
-coverage/
-.nyc_output/
-*.lcov
-target/llvm-cov/
+# Storybook (se utilizado)
+storybook-static/
 
-# ────────────────────────────────────────────────────────────────────────────
-# Misc
-# ────────────────────────────────────────────────────────────────────────────
+# ESLint
+.eslintcache
+
+# -----------------------------------------------------------------------------
+# Variáveis de ambiente e segredos
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# Chaves e certificados
 *.pem
 *.key
 *.crt
 *.p12
 *.pfx
-!*.example.pem
+*.jks
+
+# Tokens e credenciais
+secrets/
+*.secret
+
+# -----------------------------------------------------------------------------
+# IDEs e Editores
+# -----------------------------------------------------------------------------
+
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# JetBrains (PyCharm, WebStorm, IntelliJ)
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# -----------------------------------------------------------------------------
+# Sistemas Operacionais
+# -----------------------------------------------------------------------------
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon\r
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.fuse_hidden*
+.Trash-*
+.nfs*
+
+# -----------------------------------------------------------------------------
+# Docker
+# -----------------------------------------------------------------------------
+*.pid
+*.seed
+*.pid.lock
+
+# Volumes locais de desenvolvimento
+docker-volumes/
+data/
+
+# -----------------------------------------------------------------------------
+# Banco de dados local
+# -----------------------------------------------------------------------------
+*.sqlite3
+*.db
+
+# Dumps de banco
+*.sql
+!migrations/**/*.sql
+!scripts/seed/*.sql
+
+# -----------------------------------------------------------------------------
+# Uploads e arquivos temporários
+# -----------------------------------------------------------------------------
+uploads/
+tmp/
+temp/
+*.tmp
+
+# Índices vetoriais locais (FAISS)
+*.faiss
+faiss_index/
+vector_store/
+
+# -----------------------------------------------------------------------------
+# Documentação gerada
+# -----------------------------------------------------------------------------
+site/
+docs/_build/
+
+# -----------------------------------------------------------------------------
+# Miscelânea
+# -----------------------------------------------------------------------------
+*.bak
+*.orig
+*.rej
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
